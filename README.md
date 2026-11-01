@@ -80,8 +80,15 @@ Each of 10 seeds evaluates 1024 test tasks with 128 samples per task. Context an
 are split equally: 111 each for Utah, 243 each for California and 2790 each for the US. The model
 draws 16 samples from each of 8 scan-grid shifts.
 
-`python figures.py` renders the maps and the latency against RMSE and CRPS figures in `results/`
-from the released weights and the results above.
+`python figures.py` renders the figures in `results/` from the released weights and the results
+above. The Pareto figures plot RMSE and CRPS against time per dataset. The maps show one test day
+with 25% of the stations as context for Utah and California and 10% for the US. The top row shows
+the field interpolated linearly between stations, from the observed values on the left and from
+the MFNP posterior mean at the query stations on the right. Both use the observed values at the
+context stations, which are shown as white dots. The bottom row shows the mean absolute error of the posterior mean
+at the query stations in each hexagon, and the share of query stations in each error class. The
+samples behind the maps are saved in `results/qualitative/`, and the model only runs when a file
+there is missing.
 
 ## Training
 
@@ -149,11 +156,11 @@ Baseline results are listed in `results/baselines.csv`.
 
 ![US](results/pareto_noaa_us.png)
 
-![Utah](results/noaa_qualitative_utah.png)
+![Utah, 25% context](results/noaa_qualitative_utah.png)
 
-![California](results/noaa_qualitative_california.png)
+![California, 25% context](results/noaa_qualitative_california.png)
 
-![US](results/noaa_qualitative_us.png)
+![US, 10% context](results/noaa_qualitative_us.png)
 
 ### California heat wave, September 2022
 

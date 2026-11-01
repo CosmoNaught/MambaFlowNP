@@ -3,4 +3,5 @@ flax==0.12.4
 optax==0.2.6
 numpy==2.3.5
 matplotlib==3.10.8
+scipy==1.17.1
 pytest==9.1.1
