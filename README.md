@@ -85,7 +85,7 @@ above. The Pareto figures plot RMSE and CRPS against time per dataset. The maps 
 with 25% of the stations as context for Utah and California and 10% for the US. The top row shows
 the field interpolated linearly between stations, from the observed values on the left and from
 the MFNP posterior mean at the query stations on the right. Both use the observed values at the
-context stations, which are shown as white dots. The bottom row shows the mean absolute error of the posterior mean
+context stations, which are shown as red dots. The bottom row shows the mean absolute error of the posterior mean
 at the query stations in each hexagon, and the share of query stations in each error class. The
 samples behind the maps are saved in `results/qualitative/`, and the model only runs when a file
 there is missing.

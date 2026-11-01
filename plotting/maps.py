@@ -16,7 +16,9 @@ from scipy.interpolate import griddata
 import style
 from style import DEG, FIG_W, INK
 
-STATES = pathlib.Path(__file__).resolve().parent / "assets" / "us_states_paths.npz"
+ASSETS = pathlib.Path(__file__).resolve().parent / "assets"
+STATES = ASSETS / "us_states_paths.npz"
+COUNTIES = ASSETS / "us_county_paths.npz"  # US Census county boundaries, Utah and California
 
 LOWER_48 = (
     "Alabama", "Arizona", "Arkansas", "California", "Colorado", "Connecticut", "Delaware",
@@ -33,6 +35,7 @@ class MapRegion:
     """Display settings of one region."""
 
     states: tuple       # states inside the outline
+    counties: bool      # draw county borders inside the states
     pad: float          # margin around the outline, degrees
     grid_step: float    # spacing of the grid the fields are interpolated onto, degrees
     hexagons: tuple     # hexagons across and down the error map
@@ -42,9 +45,9 @@ class MapRegion:
 
 
 REGIONS = {
-    "us": MapRegion(LOWER_48, 0.2, 0.1, (46, 16), 0.15, 0.7, 0.25),
-    "utah": MapRegion(("Utah",), 0.12, 0.01, (9, 7), 0.3, 3.2, 0.5),
-    "california": MapRegion(("California",), 0.15, 0.02, (13, 9), 0.3, 1.8, 0.5),
+    "us": MapRegion(LOWER_48, False, 0.2, 0.1, (46, 16), 0.15, 1.2, 0.25),
+    "utah": MapRegion(("Utah",), True, 0.12, 0.01, (9, 7), 0.3, 3.2, 0.5),
+    "california": MapRegion(("California",), True, 0.15, 0.02, (13, 9), 0.3, 1.8, 0.5),
 }
 
 # Classes of absolute error, shared by the error map and the histogram that serves as its legend.
@@ -57,10 +60,10 @@ TEMPERATURE_STEP = 2.0
 class Outline:
     """Outline of a set of states and the map extent around it, in degrees."""
 
-    def __init__(self, states, pad):
-        with np.load(STATES, allow_pickle=True) as f:
-            self.rings = [np.asarray(p, dtype=np.float64)
-                          for p, name in zip(f["paths"], f["state_names"]) if name in states]
+    def __init__(self, states, pad, counties=False):
+        self.rings = load_rings(STATES, states)
+        # Inner borders: between states, and between counties if asked.
+        self.borders = self.rings + (load_rings(COUNTIES, states) if counties else [])
         self.path = Path.make_compound_path(*map(Path, self.rings))
         points = np.vstack(self.rings)
         lo, hi = points.min(axis=0) - pad, points.max(axis=0) + pad
@@ -97,6 +100,12 @@ class Day:
         return np.arange(np.floor(lo), np.ceil(hi) + 1) * TEMPERATURE_STEP
 
 
+def load_rings(path, states):
+    with np.load(path, allow_pickle=True) as f:
+        return [np.asarray(p, dtype=np.float64)
+                for p, name in zip(f["paths"], f["state_names"]) if name in states]
+
+
 def setup(ax, outline):
     ax.set_xlim(*outline.extent[:2])
     ax.set_ylim(*outline.extent[2:])
@@ -105,9 +114,11 @@ def setup(ax, outline):
 
 
 def draw_outline(ax, outline, lw, borders, alpha):
-    """Borders between states in the colour ``borders`` and the outer outline on top."""
-    for ring in outline.rings:
-        ax.plot(*ring.T, color=borders, lw=lw / 2, alpha=alpha, zorder=2)
+    """Inner borders in the colour ``borders``, clipped to the outline, and the outer outline on
+    top."""
+    inner = LineCollection(outline.borders, colors=borders, lw=lw / 2, alpha=alpha, zorder=2)
+    ax.add_collection(inner)
+    inner.set_clip_path(PathPatch(outline.path, transform=ax.transData))
     ax.add_collection(LineCollection(outline.boundary(), colors=INK, lw=lw, capstyle="round",
                                      zorder=2.5))
 
@@ -214,7 +225,7 @@ def render_map(name, npz_path, out_prefix):
     """Renders the dump at ``npz_path`` for the region ``name`` ("us", "utah" or "california")
     to ``out_prefix``.pdf and .png. Returns the RMSE over the query stations inside the outline."""
     region = REGIONS[name]
-    outline = Outline(region.states, region.pad)
+    outline = Outline(region.states, region.pad, region.counties)
     day = Day(npz_path, outline)
     levels = day.temperature_levels()
     norm = BoundaryNorm(levels, 256, extend="both")
@@ -224,7 +235,7 @@ def render_map(name, npz_path, out_prefix):
     fig, axes = figure(outline.ratio)
     mesh = draw_field(axes["truth"], outline, region, day, day.truth, norm)
     draw_field(axes["prediction"], outline, region, day, day.prediction, norm)
-    axes["prediction"].scatter(*day.context.T, s=region.dot_size, c="white", lw=0, zorder=3,
+    axes["prediction"].scatter(*day.context.T, s=region.dot_size, c="#E3120B", lw=0, zorder=3,
                                rasterized=True)
     axes["truth"].set_title("Truth", pad=2)
     axes["prediction"].set_title("MFNP prediction", pad=2)
