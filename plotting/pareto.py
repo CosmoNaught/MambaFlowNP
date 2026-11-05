@@ -43,8 +43,10 @@ ABOVE_RIGHT = (4, 4, "left", "bottom")
 SMALL_REGIONS = {"CNP": ABOVE_RIGHT, "ANP": (5, 3, "left", "bottom"),
                  "CANP": (-5, -4, "right", "top"), "TNPA": ABOVE_RIGHT}
 LABEL_OFFSETS = {
-    "utah": {"rmse": {**SMALL_REGIONS, "FNP": (0, 6, "center", "bottom")},
-             "crps": {**SMALL_REGIONS, "FNP": (0, 6, "center", "bottom")}},
+    "utah": {"rmse": {**SMALL_REGIONS, "FNP": (0, 6, "center", "bottom"),
+                      "MFNP": (-7, 5, "right", "bottom")},
+             "crps": {**SMALL_REGIONS, "FNP": (0, 6, "center", "bottom"),
+                      "MFNP": (-7, 5, "right", "bottom")}},
     "california": {"rmse": {**SMALL_REGIONS, "CANP": (-3, -5, "right", "top")},
                    "crps": {**SMALL_REGIONS, "CANP": (0, -6, "center", "top")}},
     "us": {"rmse": {"CNP": (-6, 0, "right", "center"), "CANP": (4, -5, "left", "top")},
@@ -73,8 +75,7 @@ def panel(ax, results, region, metric):
                     capsize=0, zorder=3)
         ax.plot(x, y, marker, ms=10 if ours else 5.5, mfc=color, mec=INK if ours else "white",
                 mew=0.6 if ours else 0.5, zorder=5 if ours else 4)
-        dx, dy, ha, va = (OURS_OFFSET if ours
-                          else LABEL_OFFSETS[region][metric].get(name, RIGHT))
+        dx, dy, ha, va = LABEL_OFFSETS[region][metric].get(name, OURS_OFFSET if ours else RIGHT)
         # The white box hides the hatch behind the label but not the frontier line.
         ax.annotate(r"$\mathbf{MFNP}$ (ours)" if ours else name, (x, y), xytext=(dx, dy),
                     textcoords="offset points", ha=ha, va=va, fontsize=8 if ours else 7.5,
