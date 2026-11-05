@@ -24,7 +24,7 @@ MAPS = {"utah": (7, None, 0.25, None),
         "california": (7, None, 0.25, None),
         "us": (11, 20200719, 0.10, 16)}
 # Milliseconds per task (128 samples) on one NVIDIA L40S.
-LATENCY_MS = {"utah": (28.8, 0.2), "california": (62.3, 0.1), "us": (1161.0, 2.0)}
+LATENCY_MS = {"utah": (43.3, 0.4), "california": (67.9, 0.5), "us": (1125.9, 0.1)}
 NAMES = {"FlowNP": "FNP"}
 
 
