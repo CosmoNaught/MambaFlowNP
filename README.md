@@ -2,14 +2,10 @@
 
 Code and pretrained weights for MambaFlowNP (NeurIPS 2026).
 
-MambaFlowNP predicts a spatial field at query locations from observations at context locations
-and returns joint samples. Points are ordered along jittered Hilbert curves and processed by
-distance-aware Mamba-2 layers. Context points write to the scan state and query points only read
-it. All randomness shared between queries is one latent vector per sample, so each sample is the
-values of one random function of the context. Predicting a map in chunks, or adding query points,
-leaves every sample unchanged. The model is trained with flow matching, distilled into a one-step
-sampler with reflow, and fine-tuned on the continuous ranked probability score (CRPS) of its own
-samples.
+MambaFlowNP is a neural process for irregularly observed spatial fields with linear-time
+inference. Points are ordered along jittered Hilbert curves and processed by distance-aware
+Mamba-2 layers. The model is trained with flow matching, distilled into a one-step sampler with
+reflow, and fine-tuned on CRPS.
 
 ## Installation
 
@@ -54,12 +50,10 @@ samples = region.normalizer.inverse(mf.sample(model, x_ctx, y_ctx, x_qry, keys)[
 # samples: (128, 243) in °C
 ```
 
-Each key fixes one sample of the random function. Calling `mf.sample` with the same keys on any
-set of queries, whole or in chunks, returns the values of the same samples.
+The same keys give the same samples on any set of queries, whole or in chunks.
 
-Coordinates are in `region.coords` units. Longitude and latitude are mapped to these units with
-`mf.CoordFrame.fit(region.lonlat).transform(lonlat)`, and values in °C with
-`region.normalizer.transform`.
+To map your own inputs: `mf.CoordFrame.fit(region.lonlat).transform(lonlat)` for coordinates,
+`region.normalizer.transform` for values in °C.
 
 ## Evaluation
 
@@ -67,28 +61,9 @@ Coordinates are in `region.coords` units. Longitude and latitude are mapped to t
 ./reproduce.sh
 ```
 
-runs
-
-```bash
-python evaluate.py --region utah --out results/utah
-python evaluate.py --region california --out results/california
-python evaluate.py --region us --out results/us --draws-per-call 16
-python figures.py
-```
-
-Each of 10 seeds evaluates 1024 test tasks with 128 samples per task. Context and target points
-are split equally: 111 each for Utah, 243 each for California and 2790 each for the US. The model
-draws 16 samples from each of 8 scan-grid shifts.
-
-`python figures.py` renders the figures in `results/` from the released weights and the results
-above. The Pareto figures plot RMSE and CRPS against time per dataset. The maps show one test day
-with 25% of the stations as context for Utah and California and 10% for the US. The top row shows
-the field interpolated linearly between stations, from the observed values on the left and from
-the MFNP posterior mean at the query stations on the right. Both use the observed values at the
-context stations, which are shown as red dots. The bottom row shows the mean absolute error of the posterior mean
-at the query stations in each hexagon, and the share of query stations in each error class. The
-samples behind the maps are saved in `results/qualitative/`, and the model only runs when a file
-there is missing.
+10 seeds × 1024 test tasks × 128 samples per task (16 samples from each of 8 scan-grid shifts).
+Context and target points are split equally: 111 each for Utah, 243 for California, 2790 for
+the US. Map samples are cached in `results/qualitative/`.
 
 ## Training
 
@@ -115,13 +90,7 @@ python train.py --region us --out runs/us
 | CRPS batch size | 8 | 8 | 2 |
 | CRPS samples per task | 8 | 8 | 4 |
 
-AdamW with a weight decay of 1.0e-4, 100 warmup steps, cosine decay, gradient clipping at 1.0
-and an EMA decay of 0.9995; steps with non-finite gradients are skipped. Reflow couplings are
-generated with 10 Heun steps of the teacher. The model is then fine-tuned on the CRPS with a
-learning rate of 1.0e-4 at 8 tasks per batch, scaled with the square root of the batch size. The
-CRPS is measured on 64 validation tasks every 1,000 steps; training stops after 5 measurements
-without improvement, or at 40,000 steps, and keeps the best weights. The Utah and California
-models were trained on one NVIDIA L40S and the US model on one NVIDIA RTX PRO 5000 Blackwell.
+Optimizer and schedule settings are in `mambaflownp/training.py`.
 
 ## Data
 
@@ -149,6 +118,16 @@ Test set, mean ± standard error over 10 seeds.
 | US | 1.598 ± 0.003 | 0.774 ± 0.001 | 0.926 ± 0.002 | 0.955 ± 0.001 |
 
 Baseline results are listed in `results/baselines.csv`.
+
+| Model | Paper | Repo | Citation |
+|---|---|---|---|
+| CNP | [Conditional Neural Processes](https://proceedings.mlr.press/v80/garnelo18a.html) | [google-deepmind/neural-processes](https://github.com/google-deepmind/neural-processes) | Garnelo et al., ICML 2018 |
+| NP | [Neural Processes](https://arxiv.org/abs/1807.01622) | [google-deepmind/neural-processes](https://github.com/google-deepmind/neural-processes) | Garnelo et al., ICML Workshop 2018 |
+| CANP | [Attentive Neural Processes](https://arxiv.org/abs/1901.05761) | [google-deepmind/neural-processes](https://github.com/google-deepmind/neural-processes) | Kim et al., ICLR 2019 |
+| ANP | [Attentive Neural Processes](https://arxiv.org/abs/1901.05761) | [google-deepmind/neural-processes](https://github.com/google-deepmind/neural-processes) | Kim et al., ICLR 2019 |
+| TNPA | [Transformer Neural Processes: Uncertainty-Aware Meta Learning Via Sequence Modeling](https://proceedings.mlr.press/v162/nguyen22b.html) | [tung-nd/TNP-pytorch](https://github.com/tung-nd/TNP-pytorch) | Nguyen and Grover, ICML 2022 |
+| NDP | [Neural Diffusion Processes](https://proceedings.mlr.press/v202/dutordoir23a.html) | [vdutor/neural-diffusion-processes](https://github.com/vdutor/neural-diffusion-processes) | Dutordoir et al., ICML 2023 |
+| FlowNP | [Flow Matching Neural Processes](https://proceedings.neurips.cc/paper_files/paper/2025/hash/a92519f525c00085095fa41c5c46cdb5-Abstract-Conference.html) | [danrsm/flowNP](https://github.com/danrsm/flowNP) | Abu Hamad and Rosenbaum, NeurIPS 2025 |
 
 ![Utah](results/pareto_noaa_utah.png)
 
