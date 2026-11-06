@@ -183,10 +183,9 @@ def draw_histogram(ax, region, day, show_count):
 
 
 def figure(ratio):
-    """The figure and its axes, laid out in inches. Truth and prediction sit side by side with the
-    colour bar on their right, and the error map sits below them with the histogram on its right.
-    A region wider than it is tall gets an error map wider than the maps above it. Otherwise the
-    figure is at most 5 in high and centred."""
+    """Figure and axes in inches: truth, prediction and colour bar on top; error map and
+    histogram below. Wide regions get a wider error map; otherwise the figure is at most 5 in
+    high."""
     bar_w, bar_labels, bottom = 0.07, 0.42, 0.02
     if ratio > 1:
         gap, bar_gap, title, row_gap = 0.06, 0.10, 0.16, 0.06

@@ -1,4 +1,4 @@
-"""Time per dataset against RMSE and CRPS for one region, with the Pareto frontier."""
+"""Time per episode against RMSE and CRPS for one region, with the Pareto frontier."""
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -103,7 +103,7 @@ def panel(ax, results, region, metric):
     ax.xaxis.set_major_locator(LogLocator(base=10, numticks=10))
     ax.xaxis.set_minor_locator(LogLocator(base=10, subs=np.arange(2, 10), numticks=20))
     ax.xaxis.set_minor_formatter(NullFormatter())
-    ax.set_xlabel("Time per dataset (ms)")
+    ax.set_xlabel("Time per episode (ms)")
     ax.set_ylabel(f"{metric.upper()} ({DEG})")
     ax.grid(True, which="major", color="#e6e6e6", lw=0.5)
     ax.set_axisbelow(True)
