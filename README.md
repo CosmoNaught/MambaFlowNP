@@ -25,9 +25,10 @@ Tested with Python 3.14.
 | `mambaflownp/` | Model, sampling, training and data code |
 | `train.py` | Training |
 | `evaluate.py` | Evaluation |
+| `synthetic/` | Synthetic Gaussian-process tasks: settings (`gp.py`), training and evaluation |
 | `reproduce.sh` | Evaluates the released weights on Utah, California and US and renders the figures |
 | `weights/` | Weights for Utah, California and US |
-| `data/` | NOAA daily maximum temperature for Utah, California and US |
+| `data/` | NOAA daily maximum temperature for Utah, California and US; synthetic test episodes in `data/synthetic/` |
 | `figures.py`, `plotting/` | Figures in `results/` |
 | `results/` | Evaluation results and figures |
 | `tests/` | Tests |
@@ -91,6 +92,42 @@ python train.py --region us --out runs/us
 | CRPS samples per task | 8 | 8 | 4 |
 
 Optimizer and schedule settings are in `mambaflownp/training.py`.
+
+## Synthetic Gaussian processes
+
+Four GP tasks with the TNP settings (Nguyen and Grover, 2022), defined in `synthetic/gp.py`.
+No weights are released. Run from the repository root.
+
+```bash
+python -m synthetic.train --task 2d_matern32 --out runs/2d_matern32
+python -m synthetic.evaluate --task 2d_matern32 \
+    --weights runs/2d_matern32/mambaflownp_2d_matern32.npz --out results/2d_matern32
+```
+
+Ablations: `--variant single_direction | two_directions | random_order | single_hidden_state |
+morton | lexicographic`.
+
+| Setting | 1D RBF | 1D Matérn-3/2 | 1D Matérn-5/2 | 2D Matérn-3/2 |
+|---|---|---|---|---|
+| Domain | [-2, 2] | [-2, 2] | [-2, 2] | [0, 1]² |
+| Points per episode K | 128 | 128 | 128 | 256 |
+| Hidden size | 384 | 128 | 128 | 256 |
+| State size | 32 | 64 | 16 | 128 |
+| Layers | 3 | 8 | 3 | 6 |
+| RFF frequencies | 128 | 192 | 192 | 384 |
+| RFF bandwidth scale | 0.5 | 0.5 | 1.0 | 0.25 |
+| Learning rate | 8.43e-4 | 9.94e-4 | 1.63e-3 | 1.11e-3 |
+| Batch size | 128 | 128 | 128 | 64 |
+
+| Shared | |
+|---|---|
+| GP prior | lengthscale ~ U(0.1, 0.6), output scale ~ U(0.1, 1.0), noise std 0.02 |
+| Context size | ~ U{16, ..., K − 16}, rest are queries |
+| Scan | 4 directions, 8 offsets |
+| Flow matching / reflow steps | 80,000 / 20,000 (2,000 coupling batches) |
+| Sampling | one Euler step, 128 draws per episode |
+| Test sets | `data/synthetic/<task>_seed<s>.npz`: 10 seeds × 256 episodes, K/2 context, K/2 query |
+| Metrics | MSE, CRPS, 90% / 95% coverage, C2ST against the exact GP posterior |
 
 ## Data
 
