@@ -1,8 +1,4 @@
-"""MambaFlowNP networks, base distributions and checkpoint I/O.
-
-The samples of ``MambaFlowNP`` are the joint values of one random function, so predictions are
-consistent across query sets.
-"""
+"""MambaFlowNP networks, base distributions and checkpoint I/O."""
 
 import dataclasses
 from functools import partial, wraps
@@ -26,7 +22,10 @@ def _tf32(fn):
 
 @dataclasses.dataclass(frozen=True)
 class Config:
-    """Model hyperparameters. ``max_points`` sets the Fourier feature bandwidth."""
+    """Model hyperparameters. ``max_points`` sets the Fourier feature bandwidth and
+    ``coord_dim`` is the input dimension (1 or 2). ``ordering`` is "hilbert" (default), or for
+    ablations "morton", "lexicographic", "random", or "context_first" (one direction, context
+    before queries)."""
 
     hidden_size: int
     d_state: int
@@ -39,10 +38,13 @@ class Config:
     c_scale: float = 1.0
     scan_offsets: int = 8
     scan_norm: bool = True
+    coord_dim: int = 2
+    ordering: str = "hilbert"
 
     @property
     def d_min(self) -> float:
-        return max(0.5 / self.max_points ** 0.5, 1e-4)
+        """Typical spacing of ``max_points`` points in the unit cube."""
+        return max(0.5 / self.max_points ** (1.0 / self.coord_dim), 1e-4)
 
 
 def hilbert_index(x, y, order: int = 16):
@@ -71,12 +73,45 @@ def hilbert_index(x, y, order: int = 16):
     return jax.vmap(index_one)(ix, iy)
 
 
-def sort_indices(coords, num_scan_dirs: int):
-    """Hilbert scan orders: forward, reverse, transposed, transposed reverse."""
-    forward = jnp.argsort(hilbert_index(coords[:, 0], coords[:, 1])).astype(jnp.int32)
+def morton_index(x, y, order: int = 16):
+    """Index of each point along a Morton (Z-order) curve on the unit square."""
+    n = 2**order
+    ix = jnp.clip((x * n).astype(jnp.uint32), 0, n - 1)
+    iy = jnp.clip((y * n).astype(jnp.uint32), 0, n - 1)
+    d = jnp.zeros_like(ix)
+    for b in range(order):
+        d = d | (((ix >> b) & 1) << (2 * b)) | (((iy >> b) & 1) << (2 * b + 1))
+    return d
+
+
+def sort_indices(coords, num_scan_dirs: int, ordering: str = "hilbert", valid=None,
+                 is_ctx=None):
+    """Scan orders. In 2D: forward, reverse, transposed, transposed reverse along the curve of
+    ``ordering``. In 1D: ascending and descending coordinate order, repeated to fill four
+    directions. ``valid`` marks real points (padding is placed last) and ``is_ctx`` the context
+    points, used by the "random" and "context_first" orderings."""
+    if ordering == "random":
+        seed = jnp.abs(jnp.sum((coords * 1e5).astype(jnp.int32))).astype(jnp.uint32)
+        keys = jax.random.split(jax.random.PRNGKey(seed), num_scan_dirs)
+        return tuple(jnp.lexsort((jax.random.uniform(k, coords.shape[:1]), ~valid))
+                     .astype(jnp.int32) for k in keys)
+    if coords.shape[-1] == 1:
+        key, key_t = coords[:, 0], coords[:, 0]
+    elif ordering == "morton":
+        key = morton_index(coords[:, 0], coords[:, 1])
+        key_t = morton_index(coords[:, 1], coords[:, 0])
+    elif ordering == "lexicographic":
+        key = coords[:, 0] * 4.0 + coords[:, 1]
+        key_t = coords[:, 1] * 4.0 + coords[:, 0]
+    else:
+        key = hilbert_index(coords[:, 0], coords[:, 1])
+        key_t = hilbert_index(coords[:, 1], coords[:, 0])
+    if ordering == "context_first":
+        return (jnp.lexsort((key, ~is_ctx)).astype(jnp.int32),)
+    forward = jnp.argsort(key).astype(jnp.int32)
+    transposed = jnp.argsort(key_t).astype(jnp.int32)
     if num_scan_dirs == 2:
         return (forward, forward[::-1])
-    transposed = jnp.argsort(hilbert_index(coords[:, 1], coords[:, 0])).astype(jnp.int32)
     return (forward, forward[::-1], transposed, transposed[::-1])[:num_scan_dirs]
 
 
@@ -181,8 +216,8 @@ class ZeroLinear(nnx.Module):
 
 
 class DistanceAwareMambaBlock(nnx.Module):
-    """Mamba-2 block with step size conditioned on inter-point distance. With ``scan_norm``, as in
-    Mamba-2, the gated scan output is RMS-normalised before the output projection."""
+    """Mamba-2 block with step size conditioned on inter-point distance. ``scan_norm``
+    RMS-normalises the gated scan output before the output projection, as in Mamba-2."""
 
     def __init__(self, d_model: int, d_state: int, num_heads: int, chunk_size: int,
                  scan_norm: bool = True, *, rngs: nnx.Rngs):
@@ -234,21 +269,23 @@ LATENT = 256
 
 
 class MambaFlowNP(nnx.Module):
-    """Velocity field whose samples are the joint values of one random function.
+    """Velocity field conditioned on the context.
 
-    Queries only read the scan state, and the gaps and density factor use the context only, so no
-    query affects another. All randomness shared between queries is one latent c ~ N(0, I) per
-    sample: the base noise is the random function f0(x) = phi(x)^T c, and c conditions every
-    token through the adaptive normalisation. Samples for any set of queries are therefore the
-    joint values of one random function of the context.
+    Queries only read the scan state, and the gaps and density factor use the context only. Each
+    sample has one latent c ~ N(0, I): the base noise is f0(x) = phi(x)^T c, and c conditions
+    every token through the adaptive normalisation.
     """
 
     def __init__(self, cfg: Config, *, rngs: nnx.Rngs):
         self.num_scan_dirs = cfg.num_scan_dirs
         self.scan_offsets = cfg.scan_offsets
+        self.coord_dim = cfg.coord_dim
+        self.ordering = cfg.ordering
+        if cfg.ordering == "context_first" and cfg.num_scan_dirs != 1:
+            raise ValueError("context_first ordering uses one scan direction")
         h = cfg.hidden_size
 
-        self.rff = FrozenRFF(2, cfg.rff_freqs, cfg.d_min, cfg.c_scale)
+        self.rff = FrozenRFF(cfg.coord_dim, cfg.rff_freqs, cfg.d_min, cfg.c_scale)
         token_dim = 2 * cfg.rff_freqs + 1
         self.ctx_proj = nnx.Linear(token_dim, h, rngs=rngs)
         self.qry_proj = nnx.Linear(token_dim, h, rngs=rngs)
@@ -277,19 +314,20 @@ class MambaFlowNP(nnx.Module):
             nnx.Linear(LATENT, h, rngs=rngs), nnx.silu, nnx.Linear(h, h, rngs=rngs)
         )
         key = jax.random.PRNGKey(7)
-        self.noise_freq = jax.random.normal(key, (LATENT, 2)) * np.sqrt(cfg.max_points)
+        self.noise_freq = (jax.random.normal(key, (LATENT, cfg.coord_dim))
+                           * cfg.max_points ** (1.0 / cfg.coord_dim))
         self.noise_phase = jax.random.uniform(jax.random.fold_in(key, 1), (LATENT,),
                                               maxval=2 * jnp.pi)
 
     def base_noise(self, c, coords):
         """f0(x) = phi(x)^T c, shape (batch, n, 1): a unit-variance Gaussian-process sample with
-        lengthscale 1 / sqrt(max_points)."""
+        lengthscale max_points ** (-1 / coord_dim)."""
         phi = jnp.sqrt(2.0 / LATENT) * jnp.cos(coords @ self.noise_freq.T + self.noise_phase)
         return jnp.einsum("bnm,bm->bn", phi, c)[..., None]
 
     def precompute_routing(self, x_ctx, x_qry, mask=None, offset=None):
         """Scan orders over all points; each gap is to the previous context point in the order and
-        the density factor counts the context points."""
+        is scaled by the typical context spacing, num_ctx ** (-1 / coord_dim)."""
         coords = jnp.concatenate([x_ctx, x_qry], axis=1)
         n_ctx, dirs = x_ctx.shape[1], self.num_scan_dirs
         if mask is None:
@@ -298,9 +336,14 @@ class MambaFlowNP(nnx.Module):
         num_ctx = jnp.sum(is_ctx, axis=1, keepdims=True).astype(jnp.float32)
         keyed = jnp.where(mask[:, :, None], coords, jnp.finfo(jnp.float32).max)
         grid = keyed if offset is None else 0.5 * keyed + offset[:, None, :]
-        idx = jax.vmap(partial(sort_indices, num_scan_dirs=dirs))(grid)
+        idx = jax.vmap(partial(sort_indices, num_scan_dirs=dirs, ordering=self.ordering))(
+            grid, valid=mask, is_ctx=is_ctx)
         inv = tuple(jax.vmap(lambda i: jnp.argsort(i).astype(jnp.int32))(idx[d])
                     for d in range(dirs))
+
+        def density(n):
+            n = jnp.maximum(n, 1.0)
+            return jnp.sqrt(n) if self.coord_dim == 2 else n ** (1.0 / self.coord_dim)
 
         def gaps(crd, order, ctx, n):
             ordered, flag = crd[order], ctx[order]
@@ -309,7 +352,7 @@ class MambaFlowNP(nnx.Module):
             step = ordered - ordered[jnp.maximum(prev, 0)]
             dist = jnp.sqrt(jnp.sum(step ** 2, axis=-1, keepdims=True) + 1e-8)
             dist = jnp.where((prev >= 0)[:, None], jnp.minimum(dist, 10.0), 0.0)
-            return dist * jnp.sqrt(jnp.maximum(n, 1.0))
+            return dist * density(n)
 
         dists = jnp.concatenate([jax.vmap(gaps)(coords, idx[d], is_ctx, num_ctx)
                                  for d in range(dirs)], axis=0)
@@ -320,9 +363,9 @@ class MambaFlowNP(nnx.Module):
         """Returns the velocity at each query, shape (batch, n_qry, 1).
 
         Args:
-          x_ctx: Context coordinates in [0, 1], shape (batch, n_ctx, 2).
+          x_ctx: Context coordinates in [0, 1], shape (batch, n_ctx, coord_dim).
           y_ctx: Context values, shape (batch, n_ctx, 1).
-          x_qry: Query coordinates in [0, 1], shape (batch, n_qry, 2).
+          x_qry: Query coordinates in [0, 1], shape (batch, n_qry, coord_dim).
           y_t: Flow state at the queries, shape (batch, n_qry, 1).
           t: Flow time, shape (batch,).
           c: Latent of each sample, shape (batch, LATENT).

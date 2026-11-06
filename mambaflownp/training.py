@@ -79,7 +79,7 @@ def _as_jnp(batch):
 
 def train(cfg: Config, next_batch, *, lr: float, num_steps: int, distill_steps: int,
           n_couplings: int, coupling_ode_steps: int = 10, seed: int = 1, log=None,
-          log_every: int = 200):
+          log_every: int = 200, on_teacher=None):
     """Trains a teacher with flow matching and distils it with reflow.
 
     Args:
@@ -92,6 +92,7 @@ def train(cfg: Config, next_batch, *, lr: float, num_steps: int, distill_steps: 
       coupling_ode_steps: Heun steps for the teacher couplings.
       seed: Random seed.
       log: Callable taking (stage, step, loss, seconds). Prints by default.
+      on_teacher: Optional callable given the trained teacher before distillation.
 
     Returns:
       The trained model with EMA weights.
@@ -101,7 +102,7 @@ def train(cfg: Config, next_batch, *, lr: float, num_steps: int, distill_steps: 
 
     def batch():
         b = _as_jnp(next_batch())
-        offset = (jnp.asarray(random_offsets(rng, b[0].shape[0])) if cfg.scan_offsets
+        offset = (jnp.asarray(random_offsets(rng, b[0].shape[0], cfg.coord_dim)) if cfg.scan_offsets
                   else None)
         return (*b, offset)
 
@@ -118,6 +119,8 @@ def train(cfg: Config, next_batch, *, lr: float, num_steps: int, distill_steps: 
             emit("flow_matching", step, float(loss), time.time() - start)
     emit("skipped", skipped_steps(optimizer), float("nan"), time.time() - start)
     nnx.update(model, ema)
+    if on_teacher is not None:
+        on_teacher(model)
     if distill_steps <= 0:
         return model
 
@@ -195,7 +198,7 @@ def crps_finetune(model, next_batch, validation, *, members: int, lr: float = 1e
         return _fair_crps(model, key, *batch, members)(model)
 
     def offsets_for(rng, batch):
-        return (jnp.asarray(random_offsets(rng, batch[0].shape[0])) if model.scan_offsets
+        return (jnp.asarray(random_offsets(rng, batch[0].shape[0], model.coord_dim)) if model.scan_offsets
                 else None)
 
     val_rng = np.random.default_rng(seed + 900)
